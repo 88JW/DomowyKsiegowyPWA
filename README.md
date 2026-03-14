@@ -1,36 +1,76 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# DomowyKsiegowyPWA
 
-## Getting Started
+PWA do szybkiego dodawania wydatkow domowych. Aplikacja pozwala:
 
-First, run the development server:
+- zrobic zdjecie paragonu lub wrzucic PDF,
+- odczytac kwote lokalnym OCR w przegladarce przez `tesseract.js`,
+- zapisac dokument w Paperless,
+- utworzyc transakcje w Firefly III.
+
+## Wymagania
+
+- Node.js 20+ lub 22+
+- npm 10+
+- dostep do instancji Paperless-ngx
+- dostep do instancji Firefly III z tokenem API
+
+Nie trzeba instalowac systemowego Tesseract OCR. OCR dziala przez `tesseract.js` po stronie przegladarki.
+
+## Instalacja
+
+```bash
+npm install
+```
+
+## Konfiguracja zmiennych srodowiskowych
+
+Skopiuj plik przykladowy i uzupelnij wlasnymi wartosciami:
+
+```bash
+cp .env.example .env.local
+```
+
+Wymagane zmienne:
+
+- `PAPERLESS_API_URL` - adres API Paperless, np. `http://192.168.50.66:8000/api`
+- `PAPERLESS_API_TOKEN` - token API Paperless
+- `FIREFLY_API_URL` - adres API Firefly, np. `http://192.168.50.66:8082/api/v1`
+- `FIREFLY_API_TOKEN` - token API Firefly III
+
+Pliki `.env`, `.env.local` i inne warianty `.env*` sa ignorowane przez Git. Nie commituj tam sekretow do repozytorium.
+
+## Uruchomienie lokalne
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Aplikacja bedzie dostepna pod adresem `http://localhost:3000`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Build produkcyjny
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm run build
+npm run start
+```
 
-## Learn More
+## Docker
 
-To learn more about Next.js, take a look at the following resources:
+W repo jest przygotowany `Dockerfile` do builda i uruchomienia aplikacji:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+docker build -t domowy-ksiegowy-pwa .
+docker run --rm -p 3000:3000 --env-file .env.local domowy-ksiegowy-pwa
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Uwagi wdrozeniowe
 
-## Deploy on Vercel
+- `next.config.mjs` ustawia limit `serverActions.bodySizeLimit` na `20mb`.
+- `allowedOrigins` w `next.config.mjs` zawiera obecnie `finanse.miasoftware.pl` i `192.168.50.66:3000`. Przy zmianie domeny lub portu trzeba to zaktualizowac.
+- Manifest PWA oczekuje ikon `icon-192.png` i `icon-512.png`.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Bezpieczenstwo
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- Nie wypychaj prawdziwych tokenow API do GitHub.
+- Przed pushem sprawdzaj, czy w stagingu nie ma `.env`, dumpow, backupow albo innych plikow z danymi.
+- Jesli sekret byl kiedykolwiek publicznie ujawniony, trzeba go zrotowac po stronie Paperless lub Firefly.
