@@ -1,6 +1,8 @@
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function getPaperlessConfig() {
+import { COMPANY_PAPERLESS_TAGS } from '@/lib/company-documents';
+
+export function getPaperlessConfig() {
   const paperlessUrl = process.env.PAPERLESS_API_URL;
   const paperlessToken = process.env.PAPERLESS_API_TOKEN;
 
@@ -9,6 +11,128 @@ function getPaperlessConfig() {
   }
 
   return { paperlessUrl, paperlessToken };
+}
+
+type TagItem = { id?: number; name?: string };
+
+async function getOrCreateTagId(tagName: string) {
+  const { paperlessUrl, paperlessToken } = getPaperlessConfig();
+
+  const existingRes = await fetch(
+    `${paperlessUrl}/tags/?name__iexact=${encodeURIComponent(tagName)}&page_size=1`,
+    {
+      headers: {
+        Authorization: `Token ${paperlessToken}`,
+        Accept: 'application/json',
+      },
+      cache: 'no-store',
+    },
+  );
+
+  if (!existingRes.ok) {
+    const err = await existingRes.text().catch(() => 'Brak tresci bledu');
+    throw new Error(`Blad pobierania tagu (${tagName}): ${existingRes.status} (${err})`);
+  }
+
+  const existingJson = (await existingRes.json().catch(() => null)) as
+    | { results?: TagItem[] }
+    | null;
+
+  const existingId = existingJson?.results?.[0]?.id;
+  if (typeof existingId === 'number') {
+    return existingId;
+  }
+
+  const createRes = await fetch(`${paperlessUrl}/tags/`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Token ${paperlessToken}`,
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ name: tagName }),
+  });
+
+  if (!createRes.ok) {
+    const err = await createRes.text().catch(() => 'Brak tresci bledu');
+    throw new Error(`Blad tworzenia tagu (${tagName}): ${createRes.status} (${err})`);
+  }
+
+  const createdTag = (await createRes.json().catch(() => null)) as TagItem | null;
+  if (typeof createdTag?.id !== 'number') {
+    throw new Error(`Nie udalo sie utworzyc tagu: ${tagName}`);
+  }
+
+  return createdTag.id;
+}
+
+async function getDocumentTagIds(documentId: number) {
+  const { paperlessUrl, paperlessToken } = getPaperlessConfig();
+  const res = await fetch(`${paperlessUrl}/documents/${documentId}/`, {
+    headers: {
+      Authorization: `Token ${paperlessToken}`,
+      Accept: 'application/json',
+    },
+    cache: 'no-store',
+  });
+
+  if (!res.ok) {
+    const err = await res.text().catch(() => 'Brak tresci');
+    throw new Error(`Nie mozna pobrac dokumentu ${documentId}: ${res.status} (${err})`);
+  }
+
+  const json = (await res.json().catch(() => null)) as { tags?: unknown } | null;
+  if (!Array.isArray(json?.tags)) {
+    return [] as number[];
+  }
+
+  return json.tags.filter((value): value is number => typeof value === 'number');
+}
+
+export async function applyCompanyTagsToDocument(documentId: number) {
+  const { paperlessUrl, paperlessToken } = getPaperlessConfig();
+
+  const [existingTags, companyTagIds] = await Promise.all([
+    getDocumentTagIds(documentId),
+    Promise.all(COMPANY_PAPERLESS_TAGS.map((tag) => getOrCreateTagId(tag))),
+  ]);
+
+  const mergedTags = [...new Set([...existingTags, ...companyTagIds])];
+
+  const patchRes = await fetch(`${paperlessUrl}/documents/${documentId}/`, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Token ${paperlessToken}`,
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ tags: mergedTags }),
+  });
+
+  if (!patchRes.ok) {
+    const err = await patchRes.text().catch(() => 'Brak tresci');
+    throw new Error(`Nie mozna zapisac tagow dla dokumentu ${documentId}: ${patchRes.status} (${err})`);
+  }
+}
+
+export async function waitForTaskDocumentId(taskId: string, maxAttempts = 10) {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    await wait(1000);
+    const taskState = await getTaskState(taskId);
+    if (!taskState.success) {
+      continue;
+    }
+
+    if (typeof taskState.relatedDocument === 'number' && taskState.relatedDocument > 0) {
+      return taskState.relatedDocument;
+    }
+
+    if (taskState.status === 'FAILURE') {
+      break;
+    }
+  }
+
+  return null;
 }
 
 function flattenCustomFields(customFields: unknown): string {
@@ -116,6 +240,9 @@ export async function uploadToPaperlessOnly(file: File, title: string) {
         const task = Array.isArray(taskJson) ? taskJson[0] : null;
         console.log(`[OCR] Task attempt ${attempt + 1}: status=${task?.status} docId=${task?.related_document}`);
         if (task?.status === 'SUCCESS' && task.related_document) {
+          await applyCompanyTagsToDocument(task.related_document).catch((error) => {
+            console.error('[OCR] Nie udalo sie ustawic tagow firmowych:', error);
+          });
           return { success: true as const, documentId: task.related_document, taskId: cleanUuid };
         }
         if (task?.status === 'FAILURE') {
@@ -146,7 +273,12 @@ export async function uploadToPaperlessOnly(file: File, title: string) {
         | { results?: Array<{ id?: number }> }
         | null;
       const documentId = listJson?.results?.[0]?.id;
-      if (documentId) return { success: true as const, documentId, taskId: cleanUuid || null };
+      if (documentId) {
+        await applyCompanyTagsToDocument(documentId).catch((error) => {
+          console.error('[OCR] Nie udalo sie ustawic tagow firmowych:', error);
+        });
+        return { success: true as const, documentId, taskId: cleanUuid || null };
+      }
     }
   }
 

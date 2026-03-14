@@ -1,14 +1,16 @@
 import { NextResponse } from 'next/server';
 
+import { buildCompanyPaperlessTitle } from '@/lib/company-documents';
+import { getFireflyConfig } from '@/lib/firefly';
+import { applyCompanyTagsToDocument, waitForTaskDocumentId } from '@/lib/paperless-ocr';
+
 export async function POST(request: Request) {
   try {
     const paperlessUrl = process.env.PAPERLESS_API_URL;
     const paperlessToken = process.env.PAPERLESS_API_TOKEN;
-    const fireflyUrl = process.env.FIREFLY_API_URL;
-    const fireflyToken = process.env.FIREFLY_API_TOKEN;
-    const sourceAccountName = 'Mia Software';
+    const { fireflyUrl, fireflyToken, sourceAccountName } = getFireflyConfig();
 
-    if (!paperlessUrl || !paperlessToken || !fireflyUrl || !fireflyToken) {
+    if (!paperlessUrl || !paperlessToken) {
       return NextResponse.json(
         { success: false, error: 'Brak konfiguracji API w zmiennych srodowiskowych' },
         { status: 500 },
@@ -17,15 +19,24 @@ export async function POST(request: Request) {
 
     const formData = await request.formData();
     const amount = formData.get('amount') as string;
-    const title = formData.get('title') as string;
+    const title = (formData.get('title') as string) || '';
+    const issueDate = (formData.get('issueDate') as string) || '';
+    const storeName = (formData.get('storeName') as string) || title;
+    const nip = (formData.get('nip') as string) || '';
     const file = (formData.get('file') || formData.get('receipt')) as File;
+    const companyPaperlessTitle = buildCompanyPaperlessTitle({
+      issueDate,
+      storeName,
+      nip,
+      amount,
+    });
 
-    console.log(`Proba zapisu: ${title} na kwote ${amount}`);
+    console.log(`Proba zapisu: ${companyPaperlessTitle} na kwote ${amount}`);
     console.log('Wielkosc pliku:', file?.size);
 
-    if (!amount || !title) {
+    if (!amount) {
       return NextResponse.json(
-        { success: false, error: 'Brakuje wymaganych danych formularza (amount/title)' },
+        { success: false, error: 'Brakuje wymaganych danych formularza (amount)' },
         { status: 400 },
       );
     }
@@ -74,7 +85,7 @@ export async function POST(request: Request) {
 
     const pData = new FormData();
     pData.append('document', file);
-    pData.append('title', `${new Date().toISOString().split('T')[0]} - ${title}`);
+    pData.append('title', companyPaperlessTitle);
 
     const pRes = await fetch(`${paperlessUrl}/documents/post_document/`, {
       method: 'POST',
@@ -93,6 +104,16 @@ export async function POST(request: Request) {
       );
     }
 
+    const taskId = (await pRes.text().catch(() => '')).replace(/"/g, '').trim();
+    if (taskId) {
+      const documentId = await waitForTaskDocumentId(taskId, 8);
+      if (documentId) {
+        await applyCompanyTagsToDocument(documentId).catch((error) => {
+          console.error('Nie udalo sie przypisac tagow firmowych:', error);
+        });
+      }
+    }
+
     const fRes = await fetch(`${fireflyUrl}/transactions`, {
       method: 'POST',
       headers: {
@@ -105,11 +126,11 @@ export async function POST(request: Request) {
         transactions: [
           {
             type: 'withdrawal',
-            description: title,
+            description: companyPaperlessTitle,
             amount,
             date: new Date().toISOString(),
             source_name: sourceAccountName,
-            destination_name: title,
+            destination_name: storeName || nip || 'Koszt firmowy',
           },
         ],
       }),

@@ -36,8 +36,8 @@ export default async function Home() {
     <main className="min-h-screen bg-slate-50 p-4 pb-20">
       <div className="mx-auto max-w-md space-y-6">
         <header className="py-6 text-center">
-          <h1 className="text-3xl font-bold tracking-tight text-slate-900">Księgowy PWA</h1>
-          <p className="mt-2 text-slate-500">Zarządzaj wydatkami domowymi</p>
+          <h1 className="text-3xl font-bold tracking-tight text-slate-900">Koszty JDG</h1>
+          <p className="mt-2 text-slate-500">Ewidencja firmowych faktur i paragonów</p>
         </header>
 
         <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
