@@ -1,5 +1,7 @@
 export const dynamic = 'force-dynamic';
 
+import Link from 'next/link';
+
 import ExpenseForm from '@/components/ExpenseForm';
 
 export default async function Home() {
@@ -38,6 +40,14 @@ export default async function Home() {
         <header className="py-6 text-center">
           <h1 className="text-3xl font-bold tracking-tight text-slate-900">Koszty JDG</h1>
           <p className="mt-2 text-slate-500">Ewidencja firmowych faktur i paragonów</p>
+          <div className="mt-4">
+            <Link
+              href="/raporty"
+              className="inline-flex rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+            >
+              Przejdz do raportow
+            </Link>
+          </div>
         </header>
 
         <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">

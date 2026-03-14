@@ -1,4 +1,6 @@
-export const COMPANY_PAPERLESS_TAGS = ['Firma', 'Do_Rozliczenia'] as const;
+export const COMPANY_PAPERLESS_TAGS = ['Firma'] as const;
+export const COMPANY_FIREFLY_TAGS = ['Firma'] as const;
+export const FUEL_TAG = 'Paliwo';
 
 type CompanyTitleInput = {
   issueDate?: string | null;

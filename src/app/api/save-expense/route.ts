@@ -1,8 +1,39 @@
 import { NextResponse } from 'next/server';
 
-import { buildCompanyPaperlessTitle } from '@/lib/company-documents';
+import { buildCompanyPaperlessTitle, COMPANY_FIREFLY_TAGS, FUEL_TAG } from '@/lib/company-documents';
 import { getFireflyConfig } from '@/lib/firefly';
 import { applyCompanyTagsToDocument, waitForTaskDocumentId } from '@/lib/paperless-ocr';
+
+function normalizeMoneyValue(raw: string) {
+  const parsed = Number(raw.replace(/\s/g, '').replace(',', '.'));
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+  return parsed;
+}
+
+function buildFireflyNotes(input: {
+  grossAmount: string;
+  vatRate: string;
+  netAmount: string;
+  vatAmount: string;
+  sellerNip: string;
+  isFuelExpense: boolean;
+}) {
+  const lines = [
+    `Brutto: ${input.grossAmount}`,
+    `Stawka VAT: ${input.vatRate}`,
+    `Netto: ${input.netAmount}`,
+    `VAT: ${input.vatAmount}`,
+  ];
+
+  if (input.sellerNip) {
+    lines.push(`NIP sprzedawcy: ${input.sellerNip}`);
+  }
+
+  lines.push(`Kategoria: ${input.isFuelExpense ? 'Paliwo/Auto' : 'Koszt firmowy'}`);
+  return lines.join('\n');
+}
 
 export async function POST(request: Request) {
   try {
@@ -22,12 +53,16 @@ export async function POST(request: Request) {
     const title = (formData.get('title') as string) || '';
     const issueDate = (formData.get('issueDate') as string) || '';
     const storeName = (formData.get('storeName') as string) || title;
-    const nip = (formData.get('nip') as string) || '';
+    const sellerNip = ((formData.get('sellerNip') || formData.get('nip')) as string) || '';
+    const vatRate = ((formData.get('vatRate') as string) || '').toUpperCase() || 'ZW';
+    const netAmount = (formData.get('netAmount') as string) || amount;
+    const vatAmount = (formData.get('vatAmount') as string) || '0.00';
+    const isFuelExpense = ((formData.get('isFuelExpense') as string) || '').toLowerCase() === 'true';
     const file = (formData.get('file') || formData.get('receipt')) as File;
     const companyPaperlessTitle = buildCompanyPaperlessTitle({
       issueDate,
       storeName,
-      nip,
+      nip: sellerNip,
       amount,
     });
 
@@ -37,6 +72,14 @@ export async function POST(request: Request) {
     if (!amount) {
       return NextResponse.json(
         { success: false, error: 'Brakuje wymaganych danych formularza (amount)' },
+        { status: 400 },
+      );
+    }
+
+    const normalizedAmount = normalizeMoneyValue(amount);
+    if (normalizedAmount === null || normalizedAmount <= 0) {
+      return NextResponse.json(
+        { success: false, error: 'Nieprawidlowa kwota brutto.' },
         { status: 400 },
       );
     }
@@ -105,14 +148,28 @@ export async function POST(request: Request) {
     }
 
     const taskId = (await pRes.text().catch(() => '')).replace(/"/g, '').trim();
+    const paperlessExtraTags = isFuelExpense ? [FUEL_TAG] : [];
     if (taskId) {
       const documentId = await waitForTaskDocumentId(taskId, 8);
       if (documentId) {
-        await applyCompanyTagsToDocument(documentId).catch((error) => {
+        await applyCompanyTagsToDocument(documentId, paperlessExtraTags).catch((error) => {
           console.error('Nie udalo sie przypisac tagow firmowych:', error);
         });
       }
     }
+
+    const fireflyTags = isFuelExpense
+      ? [...COMPANY_FIREFLY_TAGS, FUEL_TAG]
+      : [...COMPANY_FIREFLY_TAGS];
+    const fireflyNotes = buildFireflyNotes({
+      grossAmount: normalizedAmount.toFixed(2),
+      vatRate,
+      netAmount,
+      vatAmount,
+      sellerNip,
+      isFuelExpense,
+    });
+    const transactionDate = issueDate || new Date().toISOString().slice(0, 10);
 
     const fRes = await fetch(`${fireflyUrl}/transactions`, {
       method: 'POST',
@@ -127,10 +184,12 @@ export async function POST(request: Request) {
           {
             type: 'withdrawal',
             description: companyPaperlessTitle,
-            amount,
-            date: new Date().toISOString(),
+            amount: normalizedAmount.toFixed(2),
+            date: transactionDate,
             source_name: sourceAccountName,
-            destination_name: storeName || nip || 'Koszt firmowy',
+            destination_name: storeName || sellerNip || 'Koszt firmowy',
+            notes: fireflyNotes,
+            tags: fireflyTags,
           },
         ],
       }),

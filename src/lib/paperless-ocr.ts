@@ -89,12 +89,13 @@ async function getDocumentTagIds(documentId: number) {
   return json.tags.filter((value): value is number => typeof value === 'number');
 }
 
-export async function applyCompanyTagsToDocument(documentId: number) {
+export async function applyCompanyTagsToDocument(documentId: number, extraTags: string[] = []) {
   const { paperlessUrl, paperlessToken } = getPaperlessConfig();
+  const tagsToApply = [...new Set([...COMPANY_PAPERLESS_TAGS, ...extraTags])];
 
   const [existingTags, companyTagIds] = await Promise.all([
     getDocumentTagIds(documentId),
-    Promise.all(COMPANY_PAPERLESS_TAGS.map((tag) => getOrCreateTagId(tag))),
+    Promise.all(tagsToApply.map((tag) => getOrCreateTagId(tag))),
   ]);
 
   const mergedTags = [...new Set([...existingTags, ...companyTagIds])];

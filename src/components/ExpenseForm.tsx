@@ -8,8 +8,9 @@ import { buildCompanyPaperlessTitle, normalizeIssueDate, normalizeNip } from '@/
 type LocalOcrResult = {
   amount: string | null;
   issueDate: string | null;
-  nip: string | null;
+  sellerNip: string | null;
   storeName: string | null;
+  onlyOwnNipFound: boolean;
 };
 
 type RecentDocumentItem = {
@@ -18,6 +19,17 @@ type RecentDocumentItem = {
   status: 'Wysylanie' | 'Wyslany do Paperless' | 'Blad wysylki';
   timestamp: string;
 };
+
+type VatRate = '23' | '8' | '5' | 'ZW';
+
+const MY_NIP = '7262555671';
+
+const VAT_OPTIONS: Array<{ value: VatRate; label: string }> = [
+  { value: '23', label: '23%' },
+  { value: '8', label: '8%' },
+  { value: '5', label: '5%' },
+  { value: 'ZW', label: 'ZW' },
+];
 
 const STORE_PATTERNS = [
   { name: 'Biedronka', keywords: ['BIEDRONKA'] },
@@ -85,6 +97,35 @@ function formatTimestamp(timestamp: string) {
   }
 }
 
+function parseMoney(value: string) {
+  const parsed = Number(value.replace(/\s/g, '').replace(',', '.'));
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return null;
+  }
+  return parsed;
+}
+
+function calculateVat(grossValue: string, vatRate: VatRate) {
+  const gross = parseMoney(grossValue);
+  if (!gross) {
+    return { gross: '0.00', net: '0.00', vat: '0.00' };
+  }
+
+  if (vatRate === 'ZW') {
+    return { gross: gross.toFixed(2), net: gross.toFixed(2), vat: '0.00' };
+  }
+
+  const rate = Number(vatRate);
+  const net = gross / (1 + rate / 100);
+  const vat = gross - net;
+
+  return {
+    gross: gross.toFixed(2),
+    net: net.toFixed(2),
+    vat: vat.toFixed(2),
+  };
+}
+
 export default function ExpenseForm() {
   const formRef = useRef<HTMLFormElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -96,8 +137,10 @@ export default function ExpenseForm() {
 
   const [amountValue, setAmountValue] = useState('');
   const [issueDateValue, setIssueDateValue] = useState('');
-  const [nipValue, setNipValue] = useState('');
+  const [sellerNipValue, setSellerNipValue] = useState('');
   const [storeNameValue, setStoreNameValue] = useState('');
+  const [selectedVatRate, setSelectedVatRate] = useState<VatRate>('23');
+  const [isFuelExpense, setIsFuelExpense] = useState(false);
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [selectedFileName, setSelectedFileName] = useState('');
@@ -121,15 +164,20 @@ export default function ExpenseForm() {
     };
   }, [cropSource]);
 
+  const vatCalculation = useMemo(
+    () => calculateVat(amountValue, selectedVatRate),
+    [amountValue, selectedVatRate],
+  );
+
   const paperlessTitle = useMemo(
     () =>
       buildCompanyPaperlessTitle({
         issueDate: issueDateValue,
         storeName: storeNameValue,
-        nip: nipValue,
+        nip: sellerNipValue,
         amount: amountValue,
       }),
-    [amountValue, issueDateValue, nipValue, storeNameValue],
+    [amountValue, issueDateValue, sellerNipValue, storeNameValue],
   );
 
   const detectStoreFromOcrText = (text: string) => {
@@ -180,30 +228,33 @@ export default function ExpenseForm() {
     return normalizeIssueDate(dateText);
   };
 
-  const extractNipFromText = (text: string) => {
+  const extractSellerNipFromText = (text: string) => {
     const normalized = normalizeSearchText(text);
-    const prefixed = normalized.match(/NIP\s*[:]?\s*([0-9\-\s]{10,20})/i);
 
-    if (prefixed?.[1]) {
-      const nip = normalizeNip(prefixed[1]);
-      if (nip) {
-        return nip;
-      }
+    const prefixedMatches = [...normalized.matchAll(/NIP\s*[:]?\s*([0-9\-\s]{10,20})/gi)]
+      .map((match) => normalizeNip(match[1] || ''))
+      .filter((value): value is string => Boolean(value));
+
+    const allDigits = (normalized.match(/\d{10}/g) || [])
+      .map((candidate) => normalizeNip(candidate))
+      .filter((value): value is string => Boolean(value));
+
+    const uniqueCandidates = [...new Set([...prefixedMatches, ...allDigits])];
+    if (uniqueCandidates.length === 0) {
+      return { sellerNip: null, onlyOwnNipFound: false };
     }
 
-    const allDigitMatches = normalized.match(/\d{10}/g);
-    if (!allDigitMatches || allDigitMatches.length === 0) {
-      return null;
+    const nonOwnPrefixed = prefixedMatches.find((candidate) => candidate !== MY_NIP);
+    if (nonOwnPrefixed) {
+      return { sellerNip: nonOwnPrefixed, onlyOwnNipFound: false };
     }
 
-    for (const candidate of allDigitMatches) {
-      const nip = normalizeNip(candidate);
-      if (nip) {
-        return nip;
-      }
+    const nonOwnCandidate = uniqueCandidates.find((candidate) => candidate !== MY_NIP);
+    if (nonOwnCandidate) {
+      return { sellerNip: nonOwnCandidate, onlyOwnNipFound: false };
     }
 
-    return null;
+    return { sellerNip: null, onlyOwnNipFound: uniqueCandidates.includes(MY_NIP) };
   };
 
   const prepareImageForOCR = async (file: File): Promise<Blob | File> => {
@@ -252,12 +303,14 @@ export default function ExpenseForm() {
     const preparedInput = await prepareImageForOCR(file);
     const result = await recognize(preparedInput, 'pol+eng');
     const text = result?.data?.text || '';
+    const nipResult = extractSellerNipFromText(text);
 
     return {
       amount: extractAmountFromText(text),
       issueDate: extractIssueDateFromText(text),
-      nip: extractNipFromText(text),
+      sellerNip: nipResult.sellerNip,
       storeName: detectStoreFromOcrText(text),
+      onlyOwnNipFound: nipResult.onlyOwnNipFound,
     };
   };
 
@@ -278,7 +331,7 @@ export default function ExpenseForm() {
     setSelectedFileName(file.name);
     setAnalyzing(true);
     setIsError(false);
-    setLocalOcrHint('Analiza OCR: kwota, data i NIP...');
+    setLocalOcrHint('Analiza OCR: kwota, data i NIP sprzedawcy...');
 
     try {
       const ocr = await runLocalOCR(file);
@@ -288,8 +341,10 @@ export default function ExpenseForm() {
       if (ocr.issueDate) {
         setIssueDateValue(ocr.issueDate);
       }
-      if (ocr.nip) {
-        setNipValue(ocr.nip);
+      if (ocr.sellerNip) {
+        setSellerNipValue(ocr.sellerNip);
+      } else if (ocr.onlyOwnNipFound) {
+        setSellerNipValue('');
       }
       if (ocr.storeName) {
         setStoreNameValue(ocr.storeName);
@@ -298,8 +353,9 @@ export default function ExpenseForm() {
       const hints = [];
       if (ocr.amount) hints.push(`Kwota: ${ocr.amount}`);
       if (ocr.issueDate) hints.push(`Data: ${ocr.issueDate}`);
-      if (ocr.nip) hints.push(`NIP: ${ocr.nip}`);
+      if (ocr.sellerNip) hints.push(`NIP sprzedawcy: ${ocr.sellerNip}`);
       if (ocr.storeName) hints.push(`Sklep: ${ocr.storeName}`);
+      if (ocr.onlyOwnNipFound && !ocr.sellerNip) hints.push('Nie znaleziono NIP-u sprzedawcy');
 
       setLocalOcrHint(
         hints.length > 0
@@ -396,7 +452,11 @@ export default function ExpenseForm() {
     formData.append('title', paperlessTitle);
     formData.append('issueDate', issueDateValue);
     formData.append('storeName', storeNameValue);
-    formData.append('nip', nipValue);
+    formData.append('sellerNip', sellerNipValue);
+    formData.append('vatRate', selectedVatRate);
+    formData.append('netAmount', vatCalculation.net);
+    formData.append('vatAmount', vatCalculation.vat);
+    formData.append('isFuelExpense', String(isFuelExpense));
     formData.append('file', selectedFile);
 
     setLoading(true);
@@ -425,8 +485,10 @@ export default function ExpenseForm() {
         formRef.current?.reset();
         setAmountValue('');
         setIssueDateValue('');
-        setNipValue('');
+        setSellerNipValue('');
         setStoreNameValue('');
+        setSelectedVatRate('23');
+        setIsFuelExpense(false);
         setSelectedFile(null);
         setSelectedFileName('');
         setLocalOcrHint('');
@@ -552,6 +614,34 @@ export default function ExpenseForm() {
             value={amountValue}
             onChange={(event) => setAmountValue(event.target.value)}
           />
+
+          <div className="mt-3 space-y-2">
+            <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Stawka VAT</p>
+            <div className="flex flex-wrap gap-2">
+              {VAT_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setSelectedVatRate(option.value)}
+                  className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
+                    selectedVatRate === option.value
+                      ? 'bg-emerald-600 text-white'
+                      : 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-sm">
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-slate-700">
+                Netto: <span className="font-semibold">{vatCalculation.net} PLN</span>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-slate-700">
+                VAT: <span className="font-semibold">{vatCalculation.vat} PLN</span>
+              </div>
+            </div>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -566,14 +656,14 @@ export default function ExpenseForm() {
             />
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">NIP</label>
+            <label className="mb-1 block text-sm font-medium text-slate-700">NIP Sprzedawcy</label>
             <input
               type="text"
-              name="nip"
+              name="sellerNip"
               placeholder="10 cyfr"
               className="w-full rounded border p-2"
-              value={nipValue}
-              onChange={(event) => setNipValue(event.target.value.replace(/\D/g, '').slice(0, 10))}
+              value={sellerNipValue}
+              onChange={(event) => setSellerNipValue(event.target.value.replace(/\D/g, '').slice(0, 10))}
             />
           </div>
         </div>
@@ -590,9 +680,24 @@ export default function ExpenseForm() {
           />
         </div>
 
+        <label className="flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+          <input
+            type="checkbox"
+            checked={isFuelExpense}
+            onChange={(event) => setIsFuelExpense(event.target.checked)}
+            className="h-4 w-4 rounded border-slate-400 text-emerald-600"
+          />
+          Paliwo/Auto
+        </label>
+
         <div>
           <label className="mb-1 block text-sm font-medium text-slate-700">Tytul Paperless (auto)</label>
-          <input type="text" readOnly value={paperlessTitle} className="w-full rounded border bg-slate-50 p-2 text-slate-700" />
+          <input
+            type="text"
+            readOnly
+            value={paperlessTitle}
+            className="w-full rounded border bg-slate-50 p-2 text-slate-700"
+          />
         </div>
 
         <div>
@@ -621,7 +726,11 @@ export default function ExpenseForm() {
         </button>
 
         {message && (
-          <div className={`mt-4 rounded p-3 text-center font-medium ${isError ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-800'}`}>
+          <div
+            className={`mt-4 rounded p-3 text-center font-medium ${
+              isError ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-800'
+            }`}
+          >
             {message}
           </div>
         )}
