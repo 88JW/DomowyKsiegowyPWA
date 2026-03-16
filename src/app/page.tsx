@@ -3,10 +3,12 @@ export const dynamic = 'force-dynamic';
 import Link from 'next/link';
 
 import ExpenseForm from '@/components/ExpenseForm';
+import { getSsoIdentity } from '@/lib/sso-user';
 
 export default async function Home() {
   let isPaperlessOnline = false;
   let isFireflyOnline = false;
+  const ssoIdentity = await getSsoIdentity();
 
   // Safe status checks: page should still render even when APIs/env are unavailable.
   try {
@@ -40,6 +42,9 @@ export default async function Home() {
         <header className="py-6 text-center">
           <h1 className="text-3xl font-bold tracking-tight text-slate-900">Koszty JDG</h1>
           <p className="mt-2 text-slate-500">Ewidencja firmowych faktur i paragonów</p>
+          <p className="mt-2 text-xs text-slate-500">
+            Zalogowano przez SSO jako: <span className="font-semibold text-slate-700">{ssoIdentity?.user ?? 'brak'}</span>
+          </p>
           <div className="mt-4">
             <Link
               href="/raporty"
