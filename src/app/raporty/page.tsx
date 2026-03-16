@@ -3,6 +3,8 @@
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
 
+import CompanyInvoicesDashboard from '@/components/CompanyInvoicesDashboard';
+
 type ReportResponse = {
   success: boolean;
   error?: string;
@@ -120,6 +122,8 @@ export default function RaportyPage() {
             </div>
           )}
         </section>
+
+        <CompanyInvoicesDashboard />
       </div>
     </main>
   );

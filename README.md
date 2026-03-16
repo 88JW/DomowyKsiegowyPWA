@@ -5,7 +5,8 @@ PWA do szybkiego dodawania wydatkow domowych. Aplikacja pozwala:
 - zrobic zdjecie paragonu lub wrzucic PDF,
 - odczytac kwote lokalnym OCR w przegladarce przez `tesseract.js`,
 - zapisac dokument w Paperless,
-- utworzyc transakcje w Firefly III.
+- utworzyc transakcje w Firefly III,
+- dodac zajawke zakupu firmowego i sledzic status faktury w module miesiecznych zestawien.
 
 ## Wymagania
 
@@ -36,6 +37,10 @@ Wymagane zmienne:
 - `PAPERLESS_API_TOKEN` - token API Paperless
 - `FIREFLY_API_URL` - adres API Firefly, np. `http://192.168.50.66:8082/api/v1`
 - `FIREFLY_API_TOKEN` - token API Firefly III
+
+Opcjonalne zmienne:
+
+- `COMPANY_INVOICES_STORE_PATH` - sciezka do pliku JSON przechowujacego lokalna kolekcje `CompanyInvoices`; domyslnie `./.data/company-invoices.json`
 
 Pliki `.env`, `.env.local` i inne warianty `.env*` sa ignorowane przez Git. Nie commituj tam sekretow do repozytorium.
 
@@ -68,6 +73,7 @@ docker run --rm -p 3000:3000 --env-file .env.local domowy-ksiegowy-pwa
 - `next.config.mjs` ustawia limit `serverActions.bodySizeLimit` na `20mb`.
 - `allowedOrigins` w `next.config.mjs` zawiera obecnie `finanse.miasoftware.pl` i `192.168.50.66:3000`. Przy zmianie domeny lub portu trzeba to zaktualizowac.
 - Manifest PWA oczekuje ikon `icon-192.png` i `icon-512.png`.
+- Modul `CompanyInvoices` jest przechowywany lokalnie w pliku JSON. Jesli kontener ma byc bezstanowy, ustaw `COMPANY_INVOICES_STORE_PATH` na sciezke z wolumenem.
 
 ## Bezpieczenstwo
 

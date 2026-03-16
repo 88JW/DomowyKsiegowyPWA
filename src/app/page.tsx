@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic';
 
 import Link from 'next/link';
 
+import CompanyInvoiceQuickAdd from '@/components/CompanyInvoiceQuickAdd';
 import ExpenseForm from '@/components/ExpenseForm';
 import { getSsoIdentity } from '@/lib/sso-user';
 
@@ -54,6 +55,8 @@ export default async function Home() {
             </Link>
           </div>
         </header>
+
+        <CompanyInvoiceQuickAdd />
 
         <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="mb-6 flex gap-2">
