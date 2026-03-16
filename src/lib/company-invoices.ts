@@ -1,4 +1,4 @@
-import { applyCompanyTagsToDocument, getPaperlessConfig, waitForTaskDocumentId } from '@/lib/paperless-ocr';
+import { applyCompanyTagsToDocument, getPaperlessConfig } from '@/lib/paperless-ocr';
 
 export const COMPANY_INVOICE_STATUSES = ['BRAK', 'PDF', 'SKAN'] as const;
 const PWA_INVOICE_BASE_TAG = 'PWA-WPIS-FAKTURY';
@@ -219,14 +219,14 @@ type PaperlessDocument = {
   modified?: string;
 };
 
-async function listTaggedDocuments(): Promise<PaperlessDocument[]> {
+async function listInvoiceDocuments(): Promise<PaperlessDocument[]> {
   const { paperlessUrl, paperlessToken } = getPaperlessConfig();
   const documents: PaperlessDocument[] = [];
   let page = 1;
 
   while (true) {
     const response = await fetch(
-      `${paperlessUrl}/documents/?page_size=100&page=${page}&ordering=-created&tags__name__iexact=${encodeURIComponent(PWA_INVOICE_BASE_TAG)}`,
+      `${paperlessUrl}/documents/?page_size=100&page=${page}&ordering=-created&title__icontains=${encodeURIComponent(`${TITLE_PREFIX}|`)}`,
       {
         headers: {
           Authorization: `Token ${paperlessToken}`,
@@ -363,34 +363,6 @@ async function getInvoiceEntryOrThrow(id: string, userEmail: string) {
   return mapped;
 }
 
-async function findDocumentIdByExactTitle(title: string) {
-  const { paperlessUrl, paperlessToken } = getPaperlessConfig();
-  const response = await fetch(
-    `${paperlessUrl}/documents/?title__icontains=${encodeURIComponent(title)}&ordering=-created&page_size=10`,
-    {
-      headers: {
-        Authorization: `Token ${paperlessToken}`,
-        Accept: 'application/json',
-      },
-      cache: 'no-store',
-    },
-  );
-
-  if (!response.ok) {
-    return null;
-  }
-
-  const payload = (await response.json().catch(() => null)) as
-    | { results?: Array<{ id?: number; title?: string }> }
-    | null;
-
-  const match = payload?.results?.find(
-    (item) => typeof item.id === 'number' && typeof item.title === 'string' && item.title === title,
-  );
-
-  return typeof match?.id === 'number' ? match.id : null;
-}
-
 export function getCurrentMonthValue() {
   return new Date().toISOString().slice(0, 7);
 }
@@ -413,7 +385,7 @@ export function buildInvoiceSummary(invoices: CompanyInvoice[]) {
 export async function listCompanyInvoices(userEmail: string, month: string) {
   const normalizedUser = normalizeUserEmail(userEmail);
   const normalizedMonth = normalizeMonth(month);
-  const documents = await listTaggedDocuments();
+  const documents = await listInvoiceDocuments();
 
   return documents
     .map(mapPaperlessDocument)
@@ -476,34 +448,10 @@ export async function createCompanyInvoice(input: CreateCompanyInvoiceInput): Pr
   }
 
   const taskId = (await uploadRes.text().catch(() => '')).replace(/"/g, '').trim();
-  const taskDocumentId = taskId ? await waitForTaskDocumentId(taskId, 20) : null;
-  const fallbackDocumentId = taskDocumentId ? null : await findDocumentIdByExactTitle(title);
-  const documentId = taskDocumentId || fallbackDocumentId;
-
-  if (!documentId) {
-    return {
-      pending: true,
-      invoice: null,
-      taskId: taskId || '',
-    };
-  }
-
-  await applyCompanyTagsToDocument(documentId, tagsForStatus('BRAK'));
-
-  const timestamp = new Date().toISOString();
   return {
-    pending: false,
-    invoice: {
-      id: String(documentId),
-      date: normalizedDate,
-      description: normalizedDescription,
-      amount: normalizedAmount,
-      documentStatus: 'BRAK' as const,
-      entryType: 'ZAJAWKA' as const,
-      userEmail: normalizedUser,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    },
+    pending: true,
+    invoice: null,
+    taskId: taskId || '',
   };
 }
 
