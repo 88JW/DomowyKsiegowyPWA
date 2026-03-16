@@ -10,6 +10,7 @@ type CompanyInvoice = {
   description: string;
   amount: number | null;
   documentStatus: CompanyInvoiceStatus;
+  entryType: 'ZAJAWKA' | 'FAKTURA';
   userEmail: string;
 };
 
@@ -57,12 +58,28 @@ function monthLabel(month: string) {
   return parsed.toLocaleDateString('pl-PL', { month: 'long', year: 'numeric' });
 }
 
+function summarize(invoices: CompanyInvoice[]) {
+  return {
+    total: invoices.length,
+    missing: invoices.filter((invoice) => invoice.documentStatus === 'BRAK').length,
+    pdf: invoices.filter((invoice) => invoice.documentStatus === 'PDF').length,
+    scan: invoices.filter((invoice) => invoice.documentStatus === 'SKAN').length,
+    amountTotal: Number(invoices.reduce((sum, invoice) => sum + (invoice.amount || 0), 0).toFixed(2)),
+  };
+}
+
 export default function CompanyInvoicesDashboard() {
   const [selectedMonth, setSelectedMonth] = useState(currentMonthValue());
   const [data, setData] = useState<DashboardResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [pendingId, setPendingId] = useState<string | null>(null);
+  const [editTarget, setEditTarget] = useState<CompanyInvoice | null>(null);
+  const [editDate, setEditDate] = useState('');
+  const [editDescription, setEditDescription] = useState('');
+  const [editAmount, setEditAmount] = useState('');
+  const [editStatus, setEditStatus] = useState<CompanyInvoiceStatus>('BRAK');
+  const [editSaving, setEditSaving] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -113,13 +130,7 @@ export default function CompanyInvoicesDashboard() {
       invoice.id === invoiceId ? { ...invoice, documentStatus: status } : invoice,
     );
 
-    const updatedSummary = {
-      total: updatedInvoices.length,
-      missing: updatedInvoices.filter((invoice) => invoice.documentStatus === 'BRAK').length,
-      pdf: updatedInvoices.filter((invoice) => invoice.documentStatus === 'PDF').length,
-      scan: updatedInvoices.filter((invoice) => invoice.documentStatus === 'SKAN').length,
-      amountTotal: Number(updatedInvoices.reduce((sum, invoice) => sum + (invoice.amount || 0), 0).toFixed(2)),
-    };
+    const updatedSummary = summarize(updatedInvoices);
 
     setPendingId(invoiceId);
     setError('');
@@ -145,6 +156,72 @@ export default function CompanyInvoicesDashboard() {
       setError(updateError instanceof Error ? updateError.message : 'Nieznany blad aktualizacji');
     } finally {
       setPendingId(null);
+    }
+  };
+
+  const openEdit = (invoice: CompanyInvoice) => {
+    setEditTarget(invoice);
+    setEditDate(invoice.date);
+    setEditDescription(invoice.description);
+    setEditAmount(invoice.amount === null ? '' : invoice.amount.toFixed(2));
+    setEditStatus(invoice.documentStatus);
+    setError('');
+  };
+
+  const closeEdit = () => {
+    if (!editSaving) {
+      setEditTarget(null);
+    }
+  };
+
+  const handleEditSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!editTarget || !data?.invoices) {
+      return;
+    }
+
+    const normalizedAmount = editAmount.trim() ? Number(editAmount.replace(/\s/g, '').replace(',', '.')) : null;
+
+    setEditSaving(true);
+    setError('');
+
+    try {
+      const response = await fetch(`/api/invoices/${editTarget.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          date: editDate,
+          description: editDescription,
+          amount: normalizedAmount,
+          status: editStatus,
+        }),
+      });
+
+      const result = (await response.json().catch(() => ({ success: false, error: 'Nieprawidlowa odpowiedz API' }))) as {
+        success: boolean;
+        error?: string;
+        invoice?: CompanyInvoice;
+      };
+
+      if (!response.ok || !result.success || !result.invoice) {
+        throw new Error(result.error || `HTTP ${response.status}`);
+      }
+
+      const nextInvoices = data.invoices.map((invoice) =>
+        invoice.id === result.invoice?.id ? result.invoice : invoice,
+      );
+
+      setData({
+        ...data,
+        invoices: nextInvoices,
+        summary: summarize(nextInvoices),
+      });
+      setEditTarget(null);
+    } catch (submitError: unknown) {
+      setError(submitError instanceof Error ? submitError.message : 'Nieznany blad edycji');
+    } finally {
+      setEditSaving(false);
     }
   };
 
@@ -221,6 +298,9 @@ export default function CompanyInvoicesDashboard() {
                       <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 md:hidden">Zakup</p>
                       <p className="text-sm font-semibold text-slate-900">{invoice.description}</p>
                       <p className="mt-1 text-xs text-slate-500">Uzytkownik: {invoice.userEmail}</p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        Typ wpisu: {invoice.entryType === 'ZAJAWKA' ? 'Zajawka (oczekuje na fakture)' : 'Wpis faktury'}
+                      </p>
                     </div>
 
                     <div>
@@ -245,6 +325,15 @@ export default function CompanyInvoicesDashboard() {
                           </option>
                         ))}
                       </select>
+
+                      <button
+                        type="button"
+                        onClick={() => openEdit(invoice)}
+                        disabled={pendingId === invoice.id}
+                        className="rounded-xl border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        Edytuj
+                      </button>
                     </div>
                   </li>
                 ))}
@@ -256,6 +345,100 @@ export default function CompanyInvoicesDashboard() {
             </div>
           )}
         </>
+      )}
+
+      {editTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
+          <div className="w-full max-w-xl rounded-3xl bg-white p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-semibold uppercase tracking-[0.2em] text-sky-700">Edycja wpisu</p>
+                <h3 className="mt-2 text-2xl font-bold text-slate-900">Aktualizuj zajawke / fakture</h3>
+              </div>
+              <button
+                type="button"
+                onClick={closeEdit}
+                disabled={editSaving}
+                className="rounded-full border border-slate-200 px-3 py-1 text-sm text-slate-500 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Zamknij
+              </button>
+            </div>
+
+            <form className="mt-6 space-y-4" onSubmit={(event) => void handleEditSubmit(event)}>
+              <label className="block text-sm font-medium text-slate-700">
+                Data zakupu
+                <input
+                  type="date"
+                  value={editDate}
+                  onChange={(event) => setEditDate(event.target.value)}
+                  className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 outline-none ring-0 transition focus:border-sky-500"
+                  required
+                />
+              </label>
+
+              <label className="block text-sm font-medium text-slate-700">
+                Opis zakupu
+                <input
+                  type="text"
+                  value={editDescription}
+                  onChange={(event) => setEditDescription(event.target.value)}
+                  className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 outline-none ring-0 transition focus:border-sky-500"
+                  required
+                />
+              </label>
+
+              <label className="block text-sm font-medium text-slate-700">
+                Kwota
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={editAmount}
+                  onChange={(event) => setEditAmount(event.target.value)}
+                  placeholder="0,00"
+                  className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 outline-none ring-0 transition focus:border-sky-500"
+                />
+              </label>
+
+              <label className="block text-sm font-medium text-slate-700">
+                Status dokumentu
+                <select
+                  value={editStatus}
+                  onChange={(event) => setEditStatus(event.target.value as CompanyInvoiceStatus)}
+                  className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 outline-none transition focus:border-sky-500"
+                >
+                  {STATUS_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                Jesli ustawisz status na PDF lub SKAN, wpis automatycznie zostanie oznaczony jako normalny wpis faktury.
+              </div>
+
+              <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={closeEdit}
+                  disabled={editSaving}
+                  className="rounded-xl border border-slate-300 px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Anuluj
+                </button>
+                <button
+                  type="submit"
+                  disabled={editSaving}
+                  className="rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {editSaving ? 'Zapisywanie...' : 'Zapisz zmiany'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </section>
   );

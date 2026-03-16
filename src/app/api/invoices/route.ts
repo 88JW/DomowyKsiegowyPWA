@@ -63,14 +63,26 @@ export async function POST(request: Request) {
         ? Number(payload.amount.replace(/\s/g, '').replace(',', '.'))
         : payload.amount;
 
-    const invoice = await createCompanyInvoice({
+    const result = await createCompanyInvoice({
       date: payload.date,
       description: payload.description,
       amount: typeof amount === 'number' ? amount : null,
       userEmail,
     });
 
-    return NextResponse.json({ success: true, invoice }, { status: 201 });
+    if (result.pending) {
+      return NextResponse.json(
+        {
+          success: true,
+          pending: true,
+          taskId: result.taskId,
+          message: 'Wpis przyjety przez Paperless. Trwa przetwarzanie, pojawi sie po odswiezeniu.',
+        },
+        { status: 202 },
+      );
+    }
+
+    return NextResponse.json({ success: true, pending: false, invoice: result.invoice }, { status: 201 });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Nieznany blad tworzenia faktury';
     return NextResponse.json({ success: false, error: message }, { status: 400 });

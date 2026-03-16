@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { APP_LAST_CHANGE_AT, formatLastChangeForPl } from '@/lib/app-meta';
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -35,12 +36,19 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const lastChangeLabel = formatLastChangeForPl(APP_LAST_CHANGE_AT);
+
   return (
     <html lang="en">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${geistSans.variable} ${geistMono.variable} min-h-screen antialiased`}
       >
-        {children}
+        <div className="flex min-h-screen flex-col">
+          <div className="flex-1">{children}</div>
+          <footer className="border-t border-slate-200 bg-white px-4 py-3 text-center text-xs text-slate-500">
+            Ostatnia zmiana aplikacji: {lastChangeLabel}
+          </footer>
+        </div>
       </body>
     </html>
   );

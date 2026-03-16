@@ -50,13 +50,22 @@ export default function CompanyInvoiceQuickAdd() {
       const data = (await response.json().catch(() => ({ success: false, error: 'Nieprawidlowa odpowiedz API' }))) as {
         success: boolean;
         error?: string;
+        pending?: boolean;
+        message?: string;
       };
 
       if (!response.ok || !data.success) {
         throw new Error(data.error || `HTTP ${response.status}`);
       }
 
-      setSuccessMessage('Zakup firmowy zapisany. Status domyslny: Brak faktury.');
+      if (data.pending) {
+        setSuccessMessage(
+          data.message ||
+            'Wpis przyjety przez Paperless. Trwa przetwarzanie i pojawi sie za chwile po odswiezeniu.',
+        );
+      } else {
+        setSuccessMessage('Zakup firmowy zapisany w Paperless. Status domyslny: Brak faktury.');
+      }
       resetForm();
       closeModal();
     } catch (submitError: unknown) {
@@ -149,7 +158,7 @@ export default function CompanyInvoiceQuickAdd() {
               </label>
 
               <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                Po zapisaniu wpis dostanie status <strong>Brak faktury</strong>.
+                Po zapisaniu wpis trafi do Paperless i dostanie status <strong>Brak faktury</strong>.
               </div>
 
               {error && (
